@@ -1,33 +1,35 @@
-Here's a summary of the project:
+Here is a summary of the project in the specified format:
 
-**1. Project Name:** War_Thunder_Camouflage_Scraper
+1. **Project Name:** War_Thunder_Camouflage_Scraper
+2. **Short Description:** A Python script designed to scrape camouflage data from War Thunder.
+3. **Overall Description:** This project utilizes the Playwright browser automation library to navigate the War Thunder website, gathering information on tank camouflages and saving them in a SQLite database. The script can run concurrently across multiple tabs, allowing for efficient data collection. Additionally, it includes features for image and zip file downloading, which can be toggled on or off.
+4. **Main Purpose:** The primary purpose of this project is to gather camouflage data from War Thunder for potential use in game development or analysis.
+5. **Key Technologies:**
+   - Python
+   - Playwright
+   - SQLite
+6. **Unique Features:**
+   - Concurrent tab usage for efficient data collection
+   - Image and zip file downloading features
+7. **Future Improvements:**
+   - Potential improvement of the script to handle more complex web pages or game websites.
+   - Exploration of using other machine learning models to analyze camouflage data.
+8. **Personal Notes:** The project was created as a personal challenge to improve Python skills and learn about browser automation libraries like Playwright.
+9. **GitHub Tags:** warthunder, warthundercamouflage, browserautomation, pythonscripting
+10. **Installable Modules:** sys, re, shutil, aiosqlite, hashlib, os, gc, datetime, tempfile, polars, argparse, glob, configparser, war_thunder_utils, logging, zlib, playwright, threading, sqlite3, bs4, urllib, aiohttp, time, signal, asyncio, concurrent, json
+11. **Suggested Folder Names:** warthunder_data, camouflage_scripts, image_downloads, zip_files
+12. **Root Project Folder Name Suggestions:** WarThunderCamouflageScraper, WebDataCollector, CamoScript
 
-**2. Short Description:** A concurrent web scraper designed to collect camouflage information from war thunder aircrafts.
-
-**3. Overall Description:** This project utilizes asynchronous programming and multi-threading to efficiently scrape websites, allowing for the simultaneous collection of data across multiple tabs. By leveraging browser automation and database storage, it provides an organized system for collecting and storing valuable information on war thunder aircraft camouflages.
-
-**4. Main Purpose:** I built this to gather camouflage information from War Thunder aircrafts in a scalable and efficient manner, facilitating easier analysis and comparison of the various patterns used throughout different eras and vehicles.
-
-**5. Key Technologies:**
-- **Python**: The primary programming language used for development.
-- **asyncio**: For asynchronous programming and concurrent execution of tasks.
-- **sqlite3**: To store scraped data in a local database.
-- **Scrapy**: Not used directly, but its concepts were applied for efficient web scraping.
-
-**6. Unique Features:**
-- **Concurrency Management**: Efficient handling of multiple tabs to ensure smooth operation and reduce overall processing time.
-- **Progress Bar Updates**: Live updates on the progress of the scraping process, providing users with a clear understanding of how much data has been processed.
-
-**7. Future Improvements:**
-- **Scalability Improvement**: Further optimizing code to better utilize CPU resources, allowing for even larger datasets to be processed without significant increases in processing time.
-- **User Interface Integration**: Enhancing the project with a user-friendly interface, enabling users to easily input parameters and view results.
-
-**8. Personal Notes:** This project has been designed with scalability and efficiency at its core, demonstrating the potential of concurrent programming in real-world applications. Improving this further could lead to even more robust and efficient data collection tools.
-
-**9. GitHub Tags:**
-Python web scraper, concurrent web scraping, war thunder camouflage information, browser automation, database storage, progress bar updates, async programming, multi-threading.
-
-# Extractable Variables
-SHORT_DESCRIPTION = "A concurrent web scraper designed to collect camouflage information from war thunder aircrafts. 3. Overall Description: This project utilizes asynchronous programming and multi-threading to efficiently scrape websites, allowing for the simultaneous collection of data across multiple tabs. By leveraging browser automation and database storage, it provides an organized system for collecting and storing valuable information on war thunder aircraft camouflages. 4. Main Purpose: I built this to gather camouflage information from War Thunder aircrafts in a scalable and efficient manner, facilitating easier analysis and comparison of the various patterns used throughout different eras and vehicles. 5. Key Technologies: - Python: The primary programming language used for development. - asyncio: For asynchronous programming and concurrent execution of tasks. - sqlite3: To store scraped data in a local database. - Scrapy: Not used directly, but its concepts were applied for efficient web scraping. 6. Unique Features: - Concurrency Management: Efficient handling of multiple tabs to ensure smooth operation and reduce overall processing time. - Progress Bar Updates: Live updates on the progress of the scraping process, providing users with a clear understanding of how much data has been processed. 7. Future Improvements: - Scalability Improvement: Further optimizing code to better utilize CPU resources, allowing for even larger datasets to be processed without significant increases in processing time. - User Interface Integration: Enhancing the project with a user-friendly interface, enabling users to easily input parameters and view results. 8. Personal Notes: This project has been designed with scalability and efficiency at its core, demonstrating the potential of concurrent programming in real-world applications. Improving this further could lead to even more robust and efficient data collection tools. 9. GitHub Tags: Python web scraper, concurrent web scraping, war thunder camouflage information, browser automation, database storage, progress bar updates, async programming, multi-threading."
-OVERALL_DESCRIPTION = "This project utilizes asynchronous programming and multi-threading to efficiently scrape websites, allowing for the simultaneous collection of data across multiple tabs. By leveraging browser automation and database storage, it provides an organized system for collecting and storing valuable information on war thunder aircraft camouflages. 4. Main Purpose: I built this to gather camouflage information from War Thunder aircrafts in a scalable and efficient manner, facilitating easier analysis and comparison of the various patterns used throughout different eras and vehicles. 5. Key Technologies: - Python: The primary programming language used for development. - asyncio: For asynchronous programming and concurrent execution of tasks. - sqlite3: To store scraped data in a local database. - Scrapy: Not used directly, but its concepts were applied for efficient web scraping. 6. Unique Features: - Concurrency Management: Efficient handling of multiple tabs to ensure smooth operation and reduce overall processing time. - Progress Bar Updates: Live updates on the progress of the scraping process, providing users with a clear understanding of how much data has been processed. 7. Future Improvements: - Scalability Improvement: Further optimizing code to better utilize CPU resources, allowing for even larger datasets to be processed without significant increases in processing time. - User Interface Integration: Enhancing the project with a user-friendly interface, enabling users to easily input parameters and view results. 8. Personal Notes: This project has been designed with scalability and efficiency at its core, demonstrating the potential of concurrent programming in real-world applications. Improving this further could lead to even more robust and efficient data collection tools. 9. GitHub Tags: Python web scraper, concurrent web scraping, war thunder camouflage information, browser automation, database storage, progress bar updates, async programming, multi-threading."
-GITHUB_TAGS = "Python web scraper, concurrent web scraping, war thunder camouflage information, browser automation, database storage, progress bar updates, async programming, multi-threading."
+# Extracted Variables:
+PROJECT_NAME = "War_Thunder_Camouflage_Scraper"
+SHORT_DESCRIPTION = "A Python script designed to scrape camouflage data from War Thunder."
+OVERALL_DESCRIPTION = "This project utilizes the Playwright browser automation library to navigate the War Thunder website, gathering information on tank camouflages and saving them in a SQLite database. The script can run concurrently across multiple tabs, allowing for efficient data collection. Additionally, it includes features for image and zip file downloading, which can be toggled on or off."
+MAIN_PURPOSE = "The primary purpose of this project is to gather camouflage data from War Thunder for potential use in game development or analysis."
+KEY_TECHNOLOGIES = "Python, Playwright, SQLite"
+UNIQUE_FEATURES = "Concurrent tab usage for efficient data collection, Image and zip file downloading features"
+FUTURE_IMPROVEMENTS = "Potential improvement of the script to handle more complex web pages or game websites., Exploration of using other machine learning models to analyze camouflage data."
+PERSONAL_NOTES = "The project was created as a personal challenge to improve Python skills and learn about browser automation libraries like Playwright."
+GITHUB_TAGS = "warthunder, warthundercamouflage, browserautomation, pythonscripting"
+INSTALLABLE_MODULES = "aiohttp, aiosqlite, polars, war_thunder_utils, playwright, bs4"
+SUGGESTED_FOLDER_NAMES = "warthunder_data, camouflage_scripts, image_downloads, zip_files"
+ROOT_PROJECT_FOLDER_NAME_SUGGESTIONS = "WarThunderCamouflageScraper, WebDataCollector, CamoScript"
