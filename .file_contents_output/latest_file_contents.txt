@@ -1,0 +1,717 @@
+
+========================================
+File: /home/hasnocool/Github/active/war_thunder_camouflage_scraper/src/war_thunder_utils.py
+========================================
+import json
+import os
+import re
+import tempfile
+import shutil
+
+def load_partial_json(file_path):
+    """
+    Load a JSON file partially to handle large files or files with potential corruption.
+    """
+    try:
+        with open(file_path, 'r') as f:
+            data = f.read()
+            # Attempt to load the JSON data
+            return json.loads(data[:data.rfind('}')+1])
+    except Exception as e:
+        print(f"Failed to load JSON from {file_path}: {e}")
+        return []
+
+def save_data_to_json(data, output_file, visited_urls, visited_urls_file):
+    """
+    Save data to JSON files using temporary files for atomic operations.
+    """
+    try:
+        # Save data to a temporary file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, dir='.') as tmp_file:
+            json.dump(data, tmp_file, indent=4)
+            temp_file_path = tmp_file.name
+        shutil.move(temp_file_path, output_file)
+        print(f"Data saved to {output_file}")
+
+        # Save visited URLs to a temporary file
+        with tempfile.NamedTemporaryFile(mode='w', delete=False, dir='.') as tmp_file:
+            json.dump(list(visited_urls), tmp_file, indent=4)
+            temp_file_path = tmp_file.name
+        shutil.move(temp_file_path, visited_urls_file)
+        print(f"Visited URLs saved to {visited_urls_file}")
+    except Exception as e:
+        print(f"Failed to save data: {e}")
+
+def extract_hashtags(description):
+    """
+    Extract hashtags from a given text description.
+    """
+    return re.findall(r"#(\w+)", description) if description else []
+
+def extract_image_urls(item):
+    """
+    Extract image URLs from a BeautifulSoup item.
+    """
+    return [img.get("src") for img in item.find_all("img")]
+
+def process_camouflage_item(item, vehicle_name):
+    """
+    Process a camouflage item from BeautifulSoup and extract relevant information.
+    """
+    post_id = item.get("post_id")
+    user = item.find("a", class_="nickname").text.strip()
+    date = item.find("a", class_="date").text.strip()
+    description = item.find("div", class_="description").text.strip() if item.find("div", class_="description") else None
+    hashtags = extract_hashtags(description)
+    image_urls = extract_image_urls(item)
+    download_link_tag = item.find("a", class_="downloads button_item")
+    download_link = download_link_tag.get("href") if download_link_tag else None
+
+    return {
+        "post_id": post_id,
+        "user": user,
+        "date": date,
+        "description": description,
+        "hashtags": hashtags,
+        "vehicle_name": vehicle_name,
+        "image_urls": image_urls,
+        "download_link": download_link
+    }
+
+========================================
+File: /home/hasnocool/Github/active/war_thunder_camouflage_scraper/src/war_thunder_camouflage_scraper.py
+========================================
+import asyncio
+import os
+import signal
+import argparse
+import zlib
+import configparser
+from bs4 import BeautifulSoup
+from urllib.parse import urlparse, parse_qs
+from playwright.async_api import async_playwright, Page
+import war_thunder_utils
+import shutil
+from datetime import datetime
+from concurrent.futures import ProcessPoolExecutor, ThreadPoolExecutor
+import gc
+import hashlib
+import logging
+import glob
+import sqlite3
+import aiohttp
+import sys
+import time
+import threading
+import polars as pl
+import aiosqlite  # Async SQLite operations
+
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+# Load configuration from config.ini
+config = configparser.ConfigParser()
+config.read('config.ini')
+
+class Config:
+    BASE_URL = config.get('settings', 'base_url')
+    MAX_RETRIES = 9
+    TIMEOUT = 60000
+    RETRY_BACKOFF = 5
+    NUM_TABS = 5
+    MAX_WORKERS = os.cpu_count()  # Use the number of CPU cores for parallel processing
+    OUTPUT_DIR = config.get('settings', 'output_dir')
+    IMAGE_DIR = config.get('settings', 'image_dir')
+    ZIP_DIR = config.get('settings', 'zip_dir')
+
+class AnsiColors:
+    RESET = '\033[0m'
+    BOLD = '\033[1m'
+    UNDERLINE = '\033[4m'
+
+    # Base colors
+    BLACK = '\033[38;5;0m'
+    RED = '\033[38;5;196m'
+    GREEN = '\033[38;5;46m'
+    YELLOW = '\033[38;5;226m'
+    BLUE = '\033[38;5;21m'
+    MAGENTA = '\033[38;5;201m'
+    CYAN = '\033[38;5;51m'
+    WHITE = '\033[38;5;231m'
+
+    # Monokai/Ayu inspired colors
+    MONOKAI_BACKGROUND = '\033[48;5;235m'
+    MONOKAI_FOREGROUND = '\033[38;5;231m'
+    MONOKAI_COMMENT = '\033[38;5;242m'
+    MONOKAI_RED = '\033[38;5;197m'
+    MONOKAI_ORANGE = '\033[38;5;208m'
+    MONOKAI_YELLOW = '\033[38;5;186m'
+    MONOKAI_GREEN = '\033[38;5;148m'
+    MONOKAI_BLUE = '\033[38;5;81m'
+    MONOKAI_PURPLE = '\033[38;5;141m'
+
+class ColorScheme:
+    TIMESTAMP = AnsiColors.MONOKAI_COMMENT
+    LEVEL_DEBUG = AnsiColors.MONOKAI_BLUE
+    LEVEL_INFO = AnsiColors.MONOKAI_GREEN
+    LEVEL_WARNING = AnsiColors.MONOKAI_YELLOW
+    LEVEL_ERROR = AnsiColors.MONOKAI_RED
+    LEVEL_CRITICAL = AnsiColors.MONOKAI_RED + AnsiColors.BOLD
+    URL = AnsiColors.MONOKAI_BLUE + AnsiColors.UNDERLINE
+    FILE_PATH = AnsiColors.MONOKAI_YELLOW
+    NUMBER = AnsiColors.MONOKAI_PURPLE
+    KEYWORD = AnsiColors.MONOKAI_ORANGE
+    PROGRESS_BAR = AnsiColors.MONOKAI_GREEN
+    PROGRESS_TEXT = AnsiColors.MONOKAI_BLUE
+    SUCCESS = AnsiColors.MONOKAI_GREEN
+    FAILURE = AnsiColors.MONOKAI_RED
+    WARNING = AnsiColors.MONOKAI_RED
+    
+class EnhancedColoredFormatter(logging.Formatter):
+    def format(self, record):
+        log_message = super().format(record)
+        return self.colorize_message(record, log_message)
+
+    def colorize_message(self, record, message):
+        level_color = getattr(ColorScheme, f"LEVEL_{record.levelname}", "")
+        message = f"{ColorScheme.TIMESTAMP}{self.formatTime(record)} - {level_color}{record.levelname}{AnsiColors.RESET} - {self.highlight_elements(record.getMessage())}"
+        return message
+
+    def highlight_elements(self, message):
+        import re
+
+        # Highlight URLs
+        message = re.sub(r'(https?://\S+)', f'{ColorScheme.URL}\\1{AnsiColors.RESET}', message)
+
+        # Highlight file paths
+        message = re.sub(r'(\S+/\S+)', f'{ColorScheme.FILE_PATH}\\1{AnsiColors.RESET}', message)
+
+        # Highlight numbers
+        message is re.sub(r'\b(\d+)\b', f'{ColorScheme.NUMBER}\\1{AnsiColors.RESET}', message)
+
+        # Highlight specific keywords
+        keywords = ["scraped", "downloaded", "processed", "failed", "total", "worker", "camouflage", "vehicle"]
+        for keyword in keywords:
+            message is re.sub(rf'\b{keyword}\b', f'{ColorScheme.KEYWORD}\\g<0>{AnsiColors.RESET}', message, flags=re.IGNORECASE)
+
+        return message
+
+class ProgressBar:
+    def __init__(self, total: int, prefix: str = '', suffix: str = '', decimals: int = 1, length: int = 50, fill: str = '█', print_end: str = "\r"):
+        self.total = total
+        self.prefix = prefix
+        self.suffix = suffix
+        self.decimals = decimals
+        self.length = length
+        self.fill = fill
+        self.print_end = print_end
+        self.start_time = time.time()
+
+    def print(self, iteration: int):
+        percent = ("{0:." + str(self.decimals) + "f}").format(100 * (iteration / float(self.total)))
+        filled_length = int(self.length * iteration // self.total)
+        self.bar = f'{ColorScheme.PROGRESS_BAR}{self.fill * filled_length}{"-" * (self.length - filled_length)}'
+        elapsed_time = time.time() - self.start_time
+
+        # Handle the case when no iterations have been processed
+        elapsed_time = time.time() - self.start_time  # Define elapsed_time
+
+        if iteration > 0:
+            eta = (elapsed_time / iteration) * (self.total - iteration)
+            eta_str = self.format_time(eta)
+        else:
+            eta_str = "N/A"
+
+        print(f'\r{self.prefix} |{self.bar}| {percent}% {self.suffix} {ColorScheme.PROGRESS_TEXT}[Elapsed: {self.format_time(elapsed_time)} | ETA: {eta_str}]{AnsiColors.RESET}', end=self.print_end)
+
+    @staticmethod
+    def format_time(seconds: float) -> str:
+        m, s = divmod(int(seconds), 60)
+        h, m = divmod(m, 60)
+        return f'{h:02d}:{m:02d}:{s:02d}'
+
+class WarThunderCamouflageScraper:
+    def __init__(self, num_tabs=Config.NUM_TABS, output_dir=".", image_dir="war_thunder_images", zip_dir="war_thunder_camouflage_zips", download_files=True, headless=False):
+        self.base_url = Config.BASE_URL
+        self.data = []
+        self.visited_urls = set()
+        self.progress_bar = None
+        self.db_path = os.path.join(output_dir, "war_thunder_camouflages.db")
+        self.image_dir = image_dir
+        self.zip_dir = zip_dir
+        self.urls_lock = asyncio.Lock()
+        self.max_retries = Config.MAX_RETRIES
+        self.num_tabs = num_tabs
+        self.shutdown_flag = False
+        self.download_files = download_files
+        self.executor = ThreadPoolExecutor(max_workers=os.cpu_count())
+        self.hash_executor = ProcessPoolExecutor(max_workers=os.cpu_count())
+        self.file_hashes = {}
+        self.progress = {"total": 0, "processed": 0, "failed": 0}
+        self.cleanup_temp_files()
+        self.ensure_db_exists()
+        self.load_existing_data()
+        self.headless = headless
+        self.logger = logging.getLogger(__name__)
+        self.data_lock = threading.Lock()  # Lock to ensure thread-safe writing to files
+
+    def cleanup_temp_files(self):
+        temp_files = glob.glob('tmp*.json')
+        for temp_file in temp_files:
+            try:
+                os.remove(temp_file)
+                logging.info(f"Removed temp file: {temp_file}")
+            except Exception as e:
+                logging.error(f"Error removing temp file {temp_file}: {e}")
+
+    def ensure_db_exists(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS camouflages (
+                    post_id TEXT PRIMARY KEY,
+                    vehicle_name TEXT,
+                    image_paths TEXT,
+                    image_urls TEXT,
+                    zip_file_path TEXT,
+                    zip_file_url TEXT,
+                    scraped_at TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS visited_urls (
+                    url TEXT PRIMARY KEY
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS file_hashes (
+                    file_path TEXT PRIMARY KEY,
+                    file_hash TEXT
+                )
+            """)
+            cursor.execute("""
+                CREATE TABLE IF NOT EXISTS url_tracking (
+                    url TEXT PRIMARY KEY,
+                    total_camouflages INTEGER,
+                    new_camouflages INTEGER,
+                    last_scraped TEXT,
+                    last_new_post_count INTEGER,
+                    last_total_count INTEGER
+                )
+            """)
+            conn.commit()
+        logging.info("Database and tables created if not already existing.")
+
+    def load_existing_data(self):
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT post_id FROM camouflages")
+            existing_post_ids = {row[0] for row in cursor.fetchall()}
+            self.visited_urls = existing_post_ids
+            logging.info(f"Loaded {len(existing_post_ids)} existing camouflages.")
+
+            cursor.execute("SELECT url FROM visited_urls")
+            visited_urls = {row[0] for row in cursor.fetchall()}
+            self.visited_urls.update(visited_urls)
+            logging.info(f"Loaded {len(visited_urls)} visited URLs.")
+
+            cursor.execute("SELECT file_path, file_hash FROM file_hashes")
+            self.file_hashes = {row[0]: row[1] for row in cursor.fetchall()}
+            logging.info("Loaded file hashes.")
+
+    async def login(self, page: Page):
+        logging.info("Opening login page...")
+        await page.goto("https://login.gaijin.net/", timeout=Config.TIMEOUT)
+
+        logging.info("Entering email...")
+        await page.fill("input[name='login']", "fleshwounded@outlook.com")
+
+        logging.info("Entering password...")
+        await page.fill("input[name='password']", "31181qwer.")
+
+        logging.info("Clicking login button...")
+        await page.click("button.input-button-main.form__button.js-anti-several-clicks")
+
+        logging.info("Waiting for login to complete...")
+        await page.wait_for_selector('div.profile-user__username:has-text("fleshwounded")', timeout=Config.TIMEOUT)
+        logging.info("Logged in successfully!")
+
+    async def get_vehicle_list(self, page: Page):
+        logging.info("Fetching vehicle list...")
+        url = f"{self.base_url}?vehicleCountry=any&vehicleType=any"
+        await page.goto(url, timeout=Config.TIMEOUT)
+        await page.wait_for_timeout(1000)  # Wait for the page to load completely
+        page_source = await page.content()
+        soup = BeautifulSoup(page_source, "html.parser")
+        vehicle_dropdown = soup.find("div", class_="bDropDown filterItem", type="vehicle")
+
+        if vehicle_dropdown is None:
+            logging.error("Vehicle dropdown not found. HTML content:")
+            logging.error(page_source)
+            raise ValueError("Vehicle dropdown not found")
+
+        vehicle_options = vehicle_dropdown.find_all("div", class_="option")
+        vehicles = [option.get("value") for option in vehicle_options if option.get("value") != "any"]
+        logging.info(f"Found {len(vehicles)} vehicles.")
+        return vehicles
+
+    async def check_for_missing_posts(self, page: Page, url):
+        logging.info(f"Checking URL for missing posts: {url}")
+        await page.goto(url, timeout=Config.TIMEOUT)
+        await self.scroll_to_bottom(page)
+        page_source = await page.content()
+        soup = BeautifulSoup(page_source, "html.parser")
+        camouflage_items = soup.find_all("div", class_="feed_item camouflage")
+        
+        new_post_ids = []
+        total_camouflages = len(camouflage_items)
+        logging.info(f"Found {total_camouflages} posts on {url}")
+        
+        for item in camouflage_items:
+            post_id = item.get("post_id")
+            if post_id not in self.visited_urls:
+                new_post_ids.append(post_id)
+                logging.info(f"New or missing post found: {post_id}")
+            else:
+                logging.info(f"Post {post_id} already exists in the database.")
+
+        new_camouflages = len(new_post_ids)
+        last_scraped = datetime.now().isoformat()
+
+        # Update the URL tracking table
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("""
+                INSERT OR REPLACE INTO url_tracking (url, total_camouflages, new_camouflages, last_scraped, last_new_post_count, last_total_count)
+                VALUES (?, ?, ?, ?, ?, ?)
+            """, (
+                url,
+                total_camouflages,
+                new_camouflages,
+                last_scraped,
+                new_camouflages,
+                total_camouflages
+            ))
+            conn.commit()
+
+        if new_post_ids:
+            logging.info(f"Total new or missing posts found on {url}: {new_camouflages}")
+        else:
+            logging.info(f"No new or missing posts found on {url}.")
+
+        return new_post_ids
+
+    async def check_for_new_posts_worker(self, context, url, sem):
+        async with sem:
+            page = await context.new_page()
+            new_posts = await self.check_for_missing_posts(page, url)
+            await page.close()
+        return url, new_posts
+
+    async def check_for_new_posts(self, context):
+        vehicles = await self.get_vehicle_list(await context.new_page())
+        urls = [
+            f"{self.base_url}?vehicleCountry=any&vehicleType=any&vehicleClass=any&vehicle={vehicle}"
+            for vehicle in vehicles
+        ]
+        
+        sem = asyncio.Semaphore(self.num_tabs)
+        tasks = [self.check_for_new_posts_worker(context, url, sem) for url in urls]
+        
+        new_posts_to_scrape = {}
+        for task in asyncio.as_completed(tasks):
+            url, new_posts = await task
+            if new_posts:
+                new_posts_to_scrape[url] = new_posts
+
+        return new_posts_to_scrape
+
+    def save_data_to_db(self, data, visited_urls, new_data):
+        with self.data_lock, sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+
+            for item in data:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO camouflages (post_id, vehicle_name, image_paths, image_urls, zip_file_path, zip_file_url, scraped_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item["post_id"],
+                    item["vehicle_name"],
+                    ",".join(item["images"]),
+                    ",".join(item["image_urls"]),
+                    item.get("zip_file_path", ""),
+                    item.get("zip_file_url", ""),
+                    item["scraped_at"]
+                ))
+
+            for item in new_data:
+                cursor.execute("""
+                    INSERT OR REPLACE INTO new_camouflages (post_id, vehicle_name, image_paths, image_urls, zip_file_path, zip_file_url, scraped_at)
+                    VALUES (?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    item["post_id"],
+                    item["vehicle_name"],
+                    ",".join(item["images"]),
+                    ",".join(item["image_urls"]),
+                    item.get("zip_file_path", ""),
+                    item.get("zip_file_url", ""),
+                    item["scraped_at"]
+                ))
+
+            for url in visited_urls:
+                cursor.execute("INSERT OR REPLACE INTO visited_urls (url) VALUES (?)", (url,))
+
+            conn.commit()
+            logging.info(f"Data saved to SQLite database at {self.db_path}")
+
+    async def download_file(self, session, url, save_path):
+        if os.path.exists(save_path):
+            logging.info(f"File already exists: {save_path}")
+            return save_path
+
+        async with session.get(url) as response:
+            if response.status == 200:
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
+                with open(save_path, 'wb') as f:
+                    f.write(await response.read())
+                return save_path
+            else:
+                logging.error(f"Failed to download file from {url}")
+                return None
+
+    def get_filename_from_url(self, url, post_id):
+        return f"{post_id}.zip"
+
+    async def scroll_to_bottom(self, page: Page):
+        previous_height = await page.evaluate("() => document.body.scrollHeight")
+        
+        while True:
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await page.wait_for_timeout(1000)  # Wait for the content to load after scrolling
+            current_height = await page.evaluate("() => document.body.scrollHeight")
+            
+            if current_height == previous_height:
+                break  # Stop if the page height didn't change, indicating no more content is being loaded
+            
+            previous_height = current_height
+
+    async def scrape_page(self, page: Page, url, specific_post_ids=None):
+        async with self.urls_lock:
+            if url in self.visited_urls:
+                self.logger.info(f"{ColorScheme.FAILURE}URL already visited: {url}{AnsiColors.RESET}")
+                self.progress["failed"] += 1
+                self.update_progress()
+                return
+            self.visited_urls.add(url)
+
+        self.logger.info(f"{ColorScheme.SUCCESS}Visiting URL: {url}{AnsiColors.RESET}")
+        vehicle_name = parse_qs(urlparse(url).query).get('vehicle', [''])[0]
+
+        for attempt in range(self.max_retries):
+            try:
+                await page.goto(url, timeout=Config.TIMEOUT)
+                await page.wait_for_timeout(1000)  # Wait for the page to load completely
+
+                # Scroll to the bottom of the page to ensure all content is loaded
+                await self.scroll_to_bottom(page)
+
+                page_source = await page.content()
+                soup = BeautifulSoup(page_source, "html.parser")
+                camouflage_items = soup.find_all("div", class_="feed_item camouflage")
+
+                new_data = []
+                async with aiohttp.ClientSession() as session:
+                    for item in camouflage_items:
+                        post_id = item.get("post_id")
+                        if post_id in self.visited_urls or (specific_post_ids and post_id not in specific_post_ids):
+                            continue
+                        camouflage_data = war_thunder_utils.process_camouflage_item(item, vehicle_name)
+                        image_urls = camouflage_data.pop("image_urls")
+
+                        post_dir = os.path.join(self.image_dir, post_id)
+                        os.makedirs(post_dir, exist_ok=True)
+
+                        image_paths = []
+                        for i, image_url in enumerate(image_urls):
+                            image_filename = f"image_{i+1}.jpg"
+                            save_path = os.path.join(post_dir, image_filename)
+
+                            if self.download_files:
+                                downloaded_image_path = await self.download_file(session, image_url, save_path)
+                                if downloaded_image_path:
+                                    image_paths.append(downloaded_image_path)
+                                    self.executor.submit(self.update_hash, downloaded_image_path)
+                            else:
+                                # If not downloading, simulate the file path
+                                image_paths.append(save_path)
+
+                        camouflage_data["images"] = image_paths
+                        camouflage_data["image_urls"] = image_urls  # Save image URLs
+                        camouflage_data["scraped_at"] = datetime.now().isoformat()
+
+                        if camouflage_data["download_link"]:
+                            zip_filename = self.get_filename_from_url(camouflage_data["download_link"], post_id)
+                            post_zip_dir = os.path.join(self.zip_dir, post_id)
+                            os.makedirs(post_zip_dir, exist_ok=True)
+                            zip_path = os.path.join(post_zip_dir, zip_filename)
+
+                            if self.download_files:
+                                downloaded_zip_path = await self.download_file(session, camouflage_data["download_link"], zip_path)
+                                if downloaded_zip_path:
+                                    camouflage_data["zip_file_path"] = downloaded_zip_path
+                                    camouflage_data["zip_file_url"] = camouflage_data["download_link"]  # Save zip file URL
+                                    self.executor.submit(self.update_hash, downloaded_zip_path)
+                            else:
+                                # If not downloading, simulate the file path
+                                camouflage_data["zip_file_path"] = zip_path
+                                camouflage_data["zip_file_url"] = camouflage_data["download_link"]  # Save zip file URL
+
+                        new_data.append(camouflage_data)
+
+                self.data.extend(new_data)
+                logging.info(f"Scraped {len(new_data)} new camouflages from {url}.")
+
+                self.executor.submit(self.save_data_to_db, self.data, self.visited_urls, new_data)
+
+                gc.collect()
+
+                self.progress["processed"] += 1
+            except Exception as e:
+                self.logger.error(f"{ColorScheme.FAILURE}Error on attempt for URL {url}: {str(e)}{AnsiColors.RESET}")
+                self.progress["failed"] += 1
+            finally:
+                self.update_progress()
+
+    def update_progress(self):
+        if self.progress_bar:
+            self.progress_bar.print(self.progress["processed"] + self.progress["failed"])
+
+    async def worker(self, context, queue, sem):
+        async with sem:
+            page = await context.new_page()
+            while True:
+                url, specific_post_ids = await queue.get()
+                if url is None:
+                    break
+                logging.info(f"Worker processing URL: {url}")
+                await self.scrape_page(page, url, specific_post_ids)
+                queue.task_done()
+            await page.close()
+
+    async def async_run(self):
+        browser = None
+        async with async_playwright() as p:
+            try:
+                browser = await p.chromium.launch(headless=self.headless)
+                context = await browser.new_context()
+                page = await context.new_page()
+                await self.login(page)
+
+                # Check for new or missing posts
+                new_posts_to_scrape = await self.check_for_new_posts(context)
+                if new_posts_to_scrape:
+                    self.logger.info(f"{ColorScheme.WARNING}Found new or missing posts to scrape.{AnsiColors.RESET}")
+                    queue = asyncio.Queue()
+                    for url, post_ids in new_posts_to_scrape.items():
+                        await queue.put((url, post_ids))
+
+                    self.progress["total"] = queue.qsize()
+
+                    sem = asyncio.Semaphore(self.num_tabs)
+                    workers = [asyncio.create_task(self.worker(context, queue, sem)) for _ in range(self.num_tabs)]
+                    await queue.join()
+
+                    for _ in range(self.num_tabs):
+                        await queue.put((None, None))
+
+                    await asyncio.gather(*workers)
+                else:
+                    self.logger.info(f"{ColorScheme.SUCCESS}No new or missing posts found.{AnsiColors.RESET}")
+
+                # Proceed with regular scraping
+                vehicles = await self.get_vehicle_list(page)
+
+                queue = asyncio.Queue()
+                for vehicle in vehicles:
+                    url = f"{self.base_url}?vehicleCountry=any&vehicleType=any&vehicleClass=any&vehicle={vehicle}"
+                    await queue.put((url, None))
+
+                self.progress["total"] = queue.qsize()
+
+                # Check if there are any URLs to process
+                if self.progress["total"] == 0:
+                    logging.error("No URLs to process. Exiting.")
+                    return
+
+                self.logger.info(f"{ColorScheme.SUCCESS}Starting {self.num_tabs} workers...{AnsiColors.RESET}")
+
+                # Initialize the progress bar now that we know the total is non-zero
+                self.progress_bar = ProgressBar(self.progress["total"], prefix='Progress:', suffix='Complete', length=50)
+                self.update_progress()  # Initial progress update
+
+                sem = asyncio.Semaphore(self.num_tabs)
+                workers = [asyncio.create_task(self.worker(context, queue, sem)) for _ in range(self.num_tabs)]
+
+                await queue.join()
+
+                for _ in range(self.num_tabs):
+                    await queue.put((None, None))
+
+                await asyncio.gather(*workers)
+                logging.info("All workers completed.")
+
+                self.logger.info(f"{ColorScheme.SUCCESS}Scraping completed!{AnsiColors.RESET}")
+                self.logger.info(f"Total URLs: {ColorScheme.NUMBER}{self.progress['total']}{AnsiColors.RESET}")
+                self.logger.info(f"Processed URLs: {ColorScheme.SUCCESS}{self.progress['processed']}{AnsiColors.RESET}")
+                self.logger.info(f"Failed URLs: {ColorScheme.FAILURE}{self.progress['failed']}{AnsiColors.RESET}")
+
+            except Exception as e:
+                self.logger.error(f"{ColorScheme.FAILURE}An error occurred: {e}{AnsiColors.RESET}")
+            finally:
+                if browser:
+                    try:
+                        await browser.close()
+                    except Exception as close_error:
+                        self.logger.error(f"{ColorScheme.FAILURE}Error closing the browser: {close_error}{AnsiColors.RESET}")
+                    self.logger.info(f"{ColorScheme.SUCCESS}Browser closed.{AnsiColors.RESET}")
+
+    def stop(self, sig, frame):
+        if not self.shutdown_flag:
+            self.shutdown_flag = True
+            logging.info("Gracefully shutting down...")
+            self.save_data_to_db(self.data, self.visited_urls, [])
+            sys.exit(0)
+
+    def update_hash(self, file_path):
+        with open(file_path, "rb") as f:
+            file_hash = hashlib.md5(f.read()).hexdigest()
+            self.file_hashes[file_path] = file_hash
+
+        with sqlite3.connect(self.db_path) as conn:
+            cursor = conn.cursor()
+            cursor.execute("INSERT OR REPLACE INTO file_hashes (file_path, file_hash) VALUES (?, ?)", (file_path, file_hash))
+            conn.commit()
+        logging.info(f"Hash updated for {file_path}")
+
+def main():
+    parser = argparse.ArgumentParser(description='War Thunder Camouflage Scraper')
+    parser.add_argument('--num_tabs', type=int, default=Config.NUM_TABS, help='Number of concurrent tabs to use')
+    parser.add_argument('--output_dir', type=str, default='.', help='Output directory for database files')
+    parser.add_argument('--image_dir', type=str, default='war_thunder_images', help='Directory to save images')
+    parser.add_argument('--zip_dir', type=str, default='war_thunder_camouflage_zips', help='Directory to save zip files')
+    parser.add_argument('--headless', action='store_true', help='Run browser in headless mode')
+    parser.add_argument('--download_files', action='store_true', help='Toggle to download image and zip files')
+    args = parser.parse_args()
+
+    scraper = WarThunderCamouflageScraper(
+        num_tabs=args.num_tabs,
+        output_dir=args.output_dir,
+        image_dir=args.image_dir,
+        zip_dir=args.zip_dir,
+        download_files=args.download_files,
+        headless=args.headless
+    )
+    signal.signal(signal.SIGINT, scraper.stop)
+    asyncio.run(scraper.async_run())
+
+if __name__ == "__main__":
+    main()

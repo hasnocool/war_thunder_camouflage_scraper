@@ -1,0 +1,5 @@
+aiohttp
+aiosqlite
+bs4
+playwright
+polars
